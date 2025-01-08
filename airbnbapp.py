@@ -2,11 +2,14 @@ import streamlit as st
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split ,GridSearchCV
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+import numpy as np
+
 
 # Set up page configuration
 st.set_page_config(
@@ -17,19 +20,58 @@ st.set_page_config(
 )
 
 # Load the dataset
+file_path = "listings.csv"
+df = pd.read_csv(file_path)
+
+
+
+# Preprocessing
+df['reviews_per_month'] = df['reviews_per_month'].fillna(0)
+df['last_review'] = pd.to_datetime(df['last_review'], errors='coerce').fillna(pd.to_datetime("2020-01-01"))
+df.dropna(subset=['name', 'price'], inplace=True)
+
+# Feature engineering
+df['days_since_last_review'] = (pd.to_datetime('today') - df['last_review']).dt.days
+df = pd.get_dummies(df, columns=['neighbourhood_group', 'room_type'], drop_first=True)
+
+# Outlier removal
+df = df[(df['price'] >= 10) & (df['price'] <= df['price'].quantile(0.99))]
+
+# Feature selection and target variable
+features = ['price', 'minimum_nights', 'number_of_reviews', 'reviews_per_month', 'calculated_host_listings_count']
+target_col = "availability_365"
+df[target_col] = df[target_col].apply(lambda x: 1 if x == 365 else 0)  # Convert to binary target
+
+X = df[features]
+y = df[target_col]
+
+# Split into train/test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Define a pipeline for scaling and model training
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', LogisticRegression(max_iter=1000, random_state=42))
+])
+
+# Train the model
 @st.cache_data
-def load_data():
-    return pd.read_csv("listings.csv")
+def train_model(X_train, y_train):
+    pipeline.fit(X_train, y_train)
+    return pipeline
 
-df = load_data()
-
-#df = preprocess_data(df)
+pipeline = train_model(X_train, y_train)
 
 # Sidebar options
-st.sidebar.title("Navigation")
+st.sidebar.header("Select Task")
 option = st.sidebar.radio(
-    "Choose a section:",
-    ["Introduction", "EDA", "Model Training", "Conclusion"]
+    "Choose the task to perform:",
+    (
+        "Introduction",
+        "Perform EDA",
+        "Train and Predict Availability",
+        "Conclusion",
+    ),
 )
 
 # Introduction Section
@@ -39,11 +81,13 @@ if option == "Introduction":
     st.image("https://upload.wikimedia.org/wikipedia/commons/6/69/Airbnb_Logo_B%C3%A9lo.svg", width=200)
 
 # EDA Section
-elif option == "EDA":
-    st.title("Exploratory Data Analysis")
-    eda_option = st.selectbox(
-        "Choose an analysis:",
-        [
+
+# Task: EDA
+elif option == "Perform EDA":
+    st.markdown("## Exploratory Data Analysis (EDA)")
+    eda_option = st.radio(
+        "Choose the analysis to display:",
+        (
             "Summary Statistics",
             "Missing Value Analysis",
             "Correlation Heatmap",
@@ -59,22 +103,19 @@ elif option == "EDA":
             "Review Scores Distribution",
             "Price vs Longitude",
             "Availability vs Price",
-             "Number of Reviews vs Price"
+            "Number of Reviews vs Price"
 
-
-
-        ]
+        ),
     )
 
     if eda_option == "Summary Statistics":
-        st.subheader("Summary Statistics")
-        st.write(df.describe(include="all"))
+        st.markdown("### Summary Statistics")
+        st.dataframe(df.describe(include="all"))
 
     elif eda_option == "Missing Value Analysis":
-        st.subheader("Missing Value Analysis")
-        st.write(df.isnull().sum())
+        st.markdown("### Missing Value Analysis")
+        st.dataframe(df.isnull().sum())
 
-    
     elif eda_option == "Correlation Heatmap":
         st.subheader("Correlation Heatmap")
         plt.figure(figsize=(12, 8))
@@ -82,13 +123,13 @@ elif option == "EDA":
         st.pyplot(plt)
 
     elif eda_option == "Feature Distributions":
-        st.markdown("### Feature Distributions (Histograms)")
+        st.markdown("### Feature Distributions")
         features = ['price', 'minimum_nights', 'number_of_reviews', 'reviews_per_month']
         for feature in features:
-            st.markdown(f"**{feature.capitalize()} Distribution**")
             plt.figure()
-            sns.histplot(df[feature], kde=True, bins=30, color="#3498db")
-            st.pyplot(plt)
+            sns.histplot(df[feature], kde=True, bins=30)
+            st.pyplot(plt.gcf())
+            plt.clf()
 
     elif eda_option == "Room Type Count":
         st.markdown("### Room Type Count")
@@ -135,7 +176,7 @@ elif option == "EDA":
     elif eda_option == "Price vs Neighborhood Relationship":
         st.markdown("### Price vs Neighborhood Relationship")
         plt.figure(figsize=(12, 6))
-        sns.boxplot(x='neighbourhood', y='price', data=df)
+        sns.bar(x='neighbourhood', y='price', data=df)
         plt.xticks(rotation=90)
         plt.title("Price Distribution Across Neighborhoods")
         st.pyplot(plt)
@@ -163,84 +204,49 @@ elif option == "EDA":
         plt.ylabel("Price")
         st.pyplot(plt)
 
-    #elif eda_option == "Availability vs Price":
-        #st.markdown("### Availability vs Price")
-        #plt.figure()
-        #sns.scatterplot(data=df, x='availability_365', y='price', alpha=0.5, color="#3498db")
-        #plt.title("Availability vs Price")
-        #st.pyplot(plt)
 
-    elif eda_option == "Review Scores Distribution":
-        st.markdown("### Review Scores Distribution")
-        review_columns = [col for col in df.columns if "number_of_reviews" in col]
-        for column in review_columns:
-            if column in df.columns:
-                plt.figure()
-                sns.histplot(df[column], kde=True, bins=30, color="#9b59b6")
-                plt.title(f"Distribution of {column.replace('_', ' ').capitalize()}")
-                st.pyplot(plt)
+# Task: Train and Predict Availability
+elif option == "Train and Predict Availability":
+    st.markdown("## Predict Availability for 365 Days")
+    
+    # Model accuracy
+    y_pred = pipeline.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    st.write(f"Model Accuracy: {accuracy * 100:.2f}%")
 
-
-
-# Model Training Section
-elif option == "Model Training":
-    #st.title("Model Training and Evaluation")
-
-    # Preprocess the dataset
-
-# Prediction Section
- #Data preprocessing
-    st.header("Data Preprocessing")
-    data = df.dropna(subset=['price'])  # Remove rows with missing target values
-    # Select relevant features
-    features = ["latitude", "longitude", "room_type", "neighbourhood_group"]
-    df = df[features + ['price']]
-    df = pd.get_dummies(df, columns=["room_type", "neighbourhood_group"], drop_first=True)
-
-    # Split data into training and testing sets
-    X = df.drop("price", axis=1)
-    y = df["price"]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    # Train model
-    model = RandomForestRegressor(random_state=42)
-    model.fit(X_train, y_train)
-
-    # Model evaluation
-    y_pred = model.predict(X_test)
-    mse = mean_squared_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-
-    st.write(f"Mean Squared Error: {mse:.2f}")
-    st.write(f"R-squared: {r2:.2f}")
-
-    # Prediction
-    st.header("Make Predictions")
-    latitude = st.number_input("Latitude", value=1.35)
-    longitude = st.number_input("Longitude", value=103.85)
-    room_type = st.selectbox("Room Type", ["Entire home/apt", "Private room", "Shared room"])
-    neighbourhood_group = st.selectbox("Neighbourhood Group", ["Central Region", "North Region", "East Region", "West Region", "North-East Region"])
+    # User input for prediction
+    st.sidebar.header("Enter Airbnb Property Details")
+    price = st.sidebar.number_input("Price", min_value=0, step=1)
+    min_nights = st.sidebar.number_input("Minimum Nights", min_value=1, step=1)
+    reviews = st.sidebar.number_input("Number of Reviews", min_value=0, step=1)
+    reviews_per_month = st.sidebar.number_input("Reviews per Month", min_value=0.0, step=0.1)
+    host_listings = st.sidebar.number_input("Number of Listings by Host", min_value=0, step=1)
 
     # Prepare input for prediction
-    input_data = pd.DataFrame({
-        "latitude": [latitude],
-        "longitude": [longitude],
-        "room_type_Private room": [1 if room_type == "Private room" else 0],
-        "room_type_Shared room": [1 if room_type == "Shared room" else 0],
-        "neighbourhood_group_North Region": [1 if neighbourhood_group == "North Region" else 0],
-        "neighbourhood_group_East Region": [1 if neighbourhood_group == "East Region" else 0],
-        "neighbourhood_group_West Region": [1 if neighbourhood_group == "West Region" else 0],
-        "neighbourhood_group_North-East Region": [1 if neighbourhood_group == "North-East Region" else 0]
+    user_input = pd.DataFrame({
+        'price': [price],
+        'minimum_nights': [min_nights],
+        'number_of_reviews': [reviews],
+        'reviews_per_month': [reviews_per_month],
+        'calculated_host_listings_count': [host_listings]
     })
 
-    if st.button("Predict Price"):
-        prediction = model.predict(input_data)
-        st.write(f"Predicted Price: ${prediction[0]:.2f}")
+    if st.button("Predict"):
+        # Standardize input and predict
+        prediction = pipeline.predict(user_input)
+        prediction_proba = pipeline.predict_proba(user_input)[0]
 
+        if prediction[0] == 1:
+            st.error(f"This property is predicted not to be available for 365 days with a probability of {prediction_proba[1] * 100:.2f}%.")
+        else:
+            st.success(f"This property is predicted to be available for 365 days with a probability of {prediction_proba[0] * 100:.2f}%.")
 
-# Conclusion Section
+# Task: Conclusion
 elif option == "Conclusion":
-    st.title("Conclusion")
-    st.write("This app demonstrates how to analyze Airbnb listings data and predict prices based on selected features.")
+    st.markdown("## Conclusion")
+    st.markdown("""
+        This project demonstrates a full workflow from data exploration to predictive modeling for Airbnb listings. 
+        It provides insights into property availability based on various features.
+    """)
     st.write("This project demonstrates a complete workflow from data exploration to model training and prediction. The flexibility to select features for predictions enhances the user experience, providing deeper insights into the model's performance """)
-    
+
