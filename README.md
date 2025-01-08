@@ -31,7 +31,7 @@ This repository contains a data science project showcasing exploratory data anal
 ## Folder Structure
 
 ```
-├── app1.py               # Main Python script for the Streamlit application
+├── airbnbanalysis.py               # Main Python script for the Streamlit application
 ├── listings.csv          # Dataset used for the analysis (replace with your file)
 ├── README.md             # Project documentation
 └── requirements.txt      # Required Python libraries
